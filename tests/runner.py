@@ -4331,27 +4331,27 @@ Pass: 0.000012 0.000012
 Pass: 0.000012 0.000012''')
 
     def test_sscanf_3(self):
-      # doubles
-      if Settings.USE_TYPED_ARRAYS == 2:
-        src = r'''
-          #include <stdio.h>
+      # i64
+      if not Settings.USE_TYPED_ARRAYS == 2: return self.skip('64-bit sscanf only supported in ta2')
+      src = r'''
+        #include <stdio.h>
 
-          int main(){
-              
-              int64_t s, m, l;
-              printf("%d\n", sscanf("123 1073741823 1125899906842620", "%lld %lld %lld", &s, &m, &l));
-              printf("%lld,%lld,%lld\n", s, m, l);
-     
-              int64_t negS, negM, negL;
-              printf("%d\n", sscanf("-123 -1073741823 -1125899906842620", "%lld %lld %lld", &negS, &negM, &negL));
-              printf("%lld,%lld,%lld\n", negS, negM, negL);
+        int main(){
+            
+            int64_t s, m, l;
+            printf("%d\n", sscanf("123 1073741823 1125899906842620", "%lld %lld %lld", &s, &m, &l));
+            printf("%lld,%lld,%lld\n", s, m, l);
+   
+            int64_t negS, negM, negL;
+            printf("%d\n", sscanf("-123 -1073741823 -1125899906842620", "%lld %lld %lld", &negS, &negM, &negL));
+            printf("%lld,%lld,%lld\n", negS, negM, negL);
 
-              return 0;
-          }
-        '''
-        
-        self.do_run(src, '3\n123,1073741823,1125899906842620\n' + 
-                       '3\n-123,-1073741823,-1125899906842620\n')
+            return 0;
+        }
+      '''
+      
+      self.do_run(src, '3\n123,1073741823,1125899906842620\n' + 
+                     '3\n-123,-1073741823,-1125899906842620\n')
         
     def test_langinfo(self):
       src = open(path_from_root('tests', 'langinfo', 'test.c'), 'r').read()
