@@ -35,7 +35,7 @@ def split_javascript_file(input_filename, output_filename_prefix, max_part_size_
           associated_source_file_base = output_filename_prefix + "_functions";
         else:
           # Functions with a known associated source file are stored in a file in the directory `output_filename_prefix`
-          associated_source_file_base = output_filename_prefix + os.path.realpath(associated_source_file_base)
+          associated_source_file_base = output_filename_prefix + os.path.realpath(associated_source_file_base.lower())
         
         # Add the function to its respective file
         if associated_source_file_base not in function_buckets:
