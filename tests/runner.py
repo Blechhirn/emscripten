@@ -1183,15 +1183,10 @@ c5,de,15,8a
           }
         '''
 
-        Settings.EMULATE_UNALIGNED_ACCESSES = 0
-
         try:
           self.do_run(src, '*300:1*\n*515559*\n*42949672960*\n')
         except Exception, e:
           assert 'must be aligned' in str(e), e # expected to fail without emulation
-
-        # XXX TODO Settings.EMULATE_UNALIGNED_ACCESSES = 1
-        #self.do_run(src, '*300:1*\n*515559*\n*42949672960*\n') # but succeeds with it
 
     def test_unsigned(self):
         Settings.CORRECT_SIGNS = 1 # We test for exactly this sort of thing here
@@ -4264,13 +4259,20 @@ at function.:blag
           printf("%d\n", sscanf("-123 -765 -34-6", "%d %u %d", &neg, &neg2, &neg3));
           printf("%d,%u,%d\n", neg, neg2, neg3);
 
+          {
+            int a = 0;
+            sscanf("1", "%i", &a);
+            printf("%i\n", a);
+          }
+
           return 0;
         }
         '''
       self.do_run(src, 'en-us : 2\nen-r : 99\nen : 3\n1.234567, 0.000000\n2.8208\n-3.0300\n|some|\n|something|\n|somethingmoar|\n' +
                        '1\n1499\n' +
                        '5\n87,0.481565,0.059481,0,1\n' +
-                       '3\n-123,4294966531,-34\n')
+                       '3\n-123,4294966531,-34\n' +
+                       '1\n')
 
     def test_sscanf_2(self):
       # doubles
@@ -4328,6 +4330,29 @@ Pass: 123456.789000 123456.789000
 Pass: 0.000012 0.000012
 Pass: 0.000012 0.000012''')
 
+    def test_sscanf_3(self):
+      # i64
+      if not Settings.USE_TYPED_ARRAYS == 2: return self.skip('64-bit sscanf only supported in ta2')
+      src = r'''
+        #include <stdio.h>
+
+        int main(){
+            
+            int64_t s, m, l;
+            printf("%d\n", sscanf("123 1073741823 1125899906842620", "%lld %lld %lld", &s, &m, &l));
+            printf("%lld,%lld,%lld\n", s, m, l);
+   
+            int64_t negS, negM, negL;
+            printf("%d\n", sscanf("-123 -1073741823 -1125899906842620", "%lld %lld %lld", &negS, &negM, &negL));
+            printf("%lld,%lld,%lld\n", negS, negM, negL);
+
+            return 0;
+        }
+      '''
+      
+      self.do_run(src, '3\n123,1073741823,1125899906842620\n' + 
+                     '3\n-123,-1073741823,-1125899906842620\n')
+        
     def test_langinfo(self):
       src = open(path_from_root('tests', 'langinfo', 'test.c'), 'r').read()
       expected = open(path_from_root('tests', 'langinfo', 'output.txt'), 'r').read()
@@ -7272,6 +7297,26 @@ f.close()
       Popen(['python', EMCC, os.path.join(self.get_dir(), 'test.cpp'), '-fcatch-undefined-behavior']).communicate()
       self.assertContained('hello, world!', run_js(os.path.join(self.get_dir(), 'a.out.js')))
 
+    def test_unaligned_memory(self):
+      open(os.path.join(self.get_dir(), 'test.cpp'), 'w').write(r'''
+        #include <stdio.h>
+
+        typedef unsigned char   Bit8u;
+        typedef unsigned short  Bit16u;
+        typedef unsigned int    Bit32u;
+
+        int main()
+        {
+          Bit8u data[4] = {0x01,0x23,0x45,0x67};
+
+          printf("data: %x\n", *(Bit32u*)data);
+          printf("data[0,1] 16bit: %x\n", *(Bit16u*)data);
+          printf("data[1,2] 16bit: %x\n", *(Bit16u*)(data+1));
+        }
+      ''')
+      Popen(['python', EMCC, os.path.join(self.get_dir(), 'test.cpp'), '-s', 'UNALIGNED_MEMORY=1']).communicate()
+      self.assertContained('data: 67452301\ndata[0,1] 16bit: 2301\ndata[1,2] 16bit: 4523', run_js(os.path.join(self.get_dir(), 'a.out.js')))
+
     def test_l_link(self):
       # Linking with -lLIBNAME and -L/DIRNAME should work
 
@@ -7342,6 +7387,70 @@ f.close()
       Popen(['python', EMCC, os.path.join(self.get_dir(), 'libfile.cpp'), '-o', 'libfile.so']).communicate()
       Popen(['python', EMCC, os.path.join(self.get_dir(), 'main.cpp'), os.path.join(self.get_dir(), 'subdir', 'libfile.so'), '-L.']).communicate()
       self.assertContained('hello from lib', run_js(os.path.join(self.get_dir(), 'a.out.js')))
+
+    def test_runtimelink_multi(self):
+      open('testa.h', 'w').write(r'''
+        #ifndef _TESTA_H_
+        #define _TESTA_H_
+
+        class TestA {
+	        public:
+		        TestA();
+        };
+
+        #endif
+      ''')
+      open('testb.h', 'w').write(r'''
+        #ifndef _TESTB_H_
+        #define _TESTB_H_
+
+        class TestB {
+	        public:
+		        TestB();
+        };
+
+        #endif
+      ''')
+      open('testa.cpp', 'w').write(r'''
+        #include <stdio.h>
+        #include <testa.h>
+
+        TestA::TestA() {
+	        printf("TestA\n");	
+        }
+      ''')
+      open('testb.cpp', 'w').write(r'''
+        #include <stdio.h>
+        #include <testb.h>
+        #include <testa.h>
+        /*
+        */
+        TestB::TestB() {
+	        printf("TestB\n");	
+	        TestA* testa = new TestA();
+        }
+      ''')
+      open('main.cpp', 'w').write(r'''
+        #include <stdio.h>
+        #include <testa.h>
+        #include <testb.h>
+
+        /*
+        */
+        int main(int argc, char** argv) {
+	        printf("Main\n");
+	        TestA* testa = new TestA();
+	        TestB* testb = new TestB();
+        }
+      ''')
+
+      Popen(['python', EMCC, 'testa.cpp', '-o', 'liba.js', '-s', 'BUILD_AS_SHARED_LIB=2', '-s', 'LINKABLE=1', '-I.']).communicate()
+      Popen(['python', EMCC, 'testb.cpp', '-o', 'libb.js', '-s', 'BUILD_AS_SHARED_LIB=2', '-s', 'LINKABLE=1', '-I.']).communicate()
+      Popen(['python', EMCC, 'main.cpp', '-o', 'main.js', '-s', 'RUNTIME_LINKED_LIBS=["liba.js", "libb.js"]', '-I.']).communicate()
+
+      Popen(['python', EMCC, 'main.cpp', 'testa.cpp', 'testb.cpp', '-o', 'full.js', '-I.']).communicate()
+
+      self.assertContained('TestA\nTestB\nTestA\n', run_js('main.js', engine=SPIDERMONKEY_ENGINE))
 
     def test_js_libraries(self):
       open(os.path.join(self.get_dir(), 'main.cpp'), 'w').write('''
@@ -8764,6 +8873,9 @@ elif 'browser' in str(sys.argv):
     def test_sdl_quit(self):
       self.btest('sdl_quit.c', '1')
 
+    def test_sdl_resize(self):
+      self.btest('sdl_resize.c', '1')
+
     def test_gc(self):
       self.btest('browser_gc.cpp', '1')
 
@@ -8944,6 +9056,7 @@ elif 'browser' in str(sys.argv):
         def websockify_func(q):
           print >> sys.stderr, 'running websockify on %d, forward to tcp %d' % (self.port+1, self.port)
           proc = Popen([path_from_root('third_party', 'websockify', 'other', 'websockify'), '-vvv', str(self.port+1), '127.0.0.1:' + str(self.port)])
+          #proc = Popen([path_from_root('third_party', 'websockify', 'websockify.py'), '-vvv', str(self.port+1), '127.0.0.1:' + str(self.port)])
           q.put(proc.pid)
           proc.communicate()
 
@@ -9000,6 +9113,15 @@ elif 'browser' in str(sys.argv):
       try:
         with self.WebsockHarness(7000):
           self.btest('websockets_gethostbyname.c', expected='571', args=['-O2'])
+      finally:
+        self.clean_pids()
+
+    def zzztest_zz_websockets_bi_bigdata(self):
+      try:
+        with self.WebsockHarness(3992, self.make_relay_server(3992, 3994)):
+          with self.WebsockHarness(3994, no_server=True):
+            Popen(['python', EMCC, path_from_root('tests', 'websockets_bi_side_bigdata.c'), '-o', 'side.html', '-DSOCKK=3995', '-s', 'SOCKET_DEBUG=0', '-I' + path_from_root('tests')]).communicate()
+            self.btest('websockets_bi_bigdata.c', expected='0', args=['-s', 'SOCKET_DEBUG=0', '-I' + path_from_root('tests')])
       finally:
         self.clean_pids()
 
